@@ -1,12 +1,3 @@
-bash
-
-cat > /home/claude/output/app.js << 'JSEOF'
-/**
- * CSU Resource Planner v2
- * Key Changes: 1 FTE = 35 hrs = 5 days, Hours->Days, Workstream->Portfolio Item
- * Removed: Epics, Priority | Added: Kanban view, multi-resource effort allocations
- */
-
 const DAYS_PER_FTE = 5;
 let workItems = [];
 let resources = [];
