@@ -21,10 +21,10 @@
     --accent-green: #22c997;
     --accent-red: #f25555;
     /* Font sizes increased by 1 level */
-    --fs-base: 15px;
-    --fs-small: 13px;
-    --fs-xs: 12px;
-    --fs-xxs: 11px;
+    --fs-base: 16px;
+    --fs-small: 14px;
+    --fs-xs: 13px;
+    --fs-xxs: 12px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -827,6 +827,17 @@ body {
 .skill-select.level-4 { background: rgba(34,201,151,0.3); }
 .skill-select.level-5 { background: rgba(34,201,151,0.5); }
 
+.category-name-edit {
+    cursor: pointer;
+    border-bottom: 1px dashed var(--border-accent);
+    padding-bottom: 1px;
+}
+
+.category-name-edit:hover {
+    color: var(--brand-primary);
+    border-color: var(--brand-primary);
+}
+
 /* Kanban Board */
 .kanban-container { 
     display: flex; 
@@ -1309,6 +1320,76 @@ body {
     color: var(--text-muted); 
     text-align: center; 
     padding: 12px; 
+}
+
+/* Estimation Summary */
+.estimation-summary {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 18px;
+    display: flex;
+    gap: 0;
+}
+
+.estimation-row {
+    flex: 1;
+    text-align: center;
+    padding: 8px 12px;
+    border-right: 1px solid var(--border);
+}
+
+.estimation-row:last-child {
+    border-right: none;
+}
+
+.estimation-label {
+    display: block;
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.estimation-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.estimation-highlight {
+    color: var(--brand-primary);
+}
+
+/* Assignment Row */
+.assignment-row {
+    display: grid;
+    grid-template-columns: 1fr 80px 32px;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.assignment-row:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.assignment-row .form-select,
+.assignment-row .form-input {
+    padding: 8px 10px;
+    font-size: var(--fs-xs);
+}
+
+.assignment-fte {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--fs-xs);
+    color: var(--brand-primary);
+    text-align: center;
 }
 
 /* Toast */
