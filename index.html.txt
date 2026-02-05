@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSU Resource Planner</title>
+    <link href="https://fonts.googleapis.com/css2?family=Exo:wght@500;600;700;800&family=Lato:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>CSU RESOURCE PLANNER<span>Change Support Unit</span></h1>
+                <div class="last-updated" id="lastUpdated">Last updated: --</div>
+            </div>
+            <nav class="nav-section">
+                <div class="nav-label">OVERVIEW</div>
+                <div class="nav-item active" data-page="dashboard">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                    Dashboard
+                </div>
+                <div class="nav-item" data-page="pipeline">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                    Work Pipeline
+                </div>
+                <div class="nav-item" data-page="kanban">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="15" rx="1"/></svg>
+                    Kanban View
+                </div>
+                <div class="nav-item" data-page="resources">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                    Resources
+                </div>
+            </nav>
+            <nav class="nav-section">
+                <div class="nav-label">ANALYSIS</div>
+                <div class="nav-item" data-page="skills">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+                    Skills Matrix
+                </div>
+                <div class="nav-item" data-page="capacity">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                    Capacity
+                </div>
+            </nav>
+            <div class="quick-stats">
+                <div class="nav-label">QUICK STATS</div>
+                <div class="stat-mini"><span class="stat-mini-label">Team Days/Wk</span><span class="stat-mini-value" id="sidebarDays">0</span></div>
+                <div class="stat-mini"><span class="stat-mini-label">Avg Utilisation</span><span class="stat-mini-value amber" id="sidebarUtil">0%</span></div>
+                <div class="stat-mini"><span class="stat-mini-label">Over-allocated</span><span class="stat-mini-value red" id="sidebarRisk">0</span></div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- DASHBOARD PAGE -->
+            <div class="page-view active" id="page-dashboard">
+                <header class="header">
+                    <div class="header-left"><h2>Dashboard</h2><p>4-week rolling view</p></div>
+                    <div class="header-actions">
+                        <button class="btn" onclick="exportAllData()">Export All</button>
+                        <button class="btn btn-primary" onclick="openWorkItemModal()">+ Work Item</button>
+                    </div>
+                </header>
+                <div class="stats-grid">
+                    <div class="stat-card"><div class="stat-label">Work Items</div><div class="stat-value" id="statWorkItems">0</div><div class="stat-sub">In progress or upcoming</div></div>
+                    <div class="stat-card"><div class="stat-label">Team Days/Week</div><div class="stat-value" id="statDays">0</div><div class="stat-sub">Total available capacity</div></div>
+                    <div class="stat-card"><div class="stat-label">Avg Utilisation</div><div class="stat-value" id="statLoad">0%</div><div class="stat-sub">Based on FTE allocation</div></div>
+                    <div class="stat-card"><div class="stat-label">Over-allocated</div><div class="stat-value" id="statRisks">0</div><div class="stat-sub">Resources above 100%</div></div>
+                </div>
+                <div class="dashboard-grid">
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">WORK PIPELINE</span><button class="card-action" onclick="navigateTo('pipeline')">→</button></div>
+                        <div class="card-body">
+                            <div class="pipeline-filters" id="dashboardFilters"></div>
+                            <div class="pipeline-list" id="pipelineListDashboard"></div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">UTILISATION HEATMAP</span><button class="card-action" onclick="navigateTo('capacity')">→</button></div>
+                        <div class="card-body"><div class="heatmap-container"><table class="heatmap-table" id="heatmapTable"></table></div></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">ALLOCATION</span><button class="card-action" onclick="navigateTo('resources')">→</button></div>
+                        <div class="card-body"><div class="allocation-list" id="allocationListDashboard"></div></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">CATEGORY COVERAGE</span><button class="card-action" onclick="navigateTo('skills')">→</button></div>
+                        <div class="card-body">
+                            <div class="category-legend"><span class="cap">Capacity</span><span class="dem">Demand</span></div>
+                            <div class="category-coverage" id="categoryCoverage"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PIPELINE PAGE -->
+            <div class="page-view" id="page-pipeline">
+                <header class="header">
+                    <div class="header-left"><h2>Work Pipeline</h2><p>All work items</p></div>
+                    <div class="header-actions">
+                        <button class="btn" onclick="downloadTemplate('workitems')">Template</button>
+                        <button class="btn btn-primary" onclick="openWorkItemModal()">+ Work Item</button>
+                    </div>
+                </header>
+                <div class="full-card">
+                    <div class="card-header"><span class="card-title">ALL WORK</span></div>
+                    <div class="card-body">
+                        <div class="pipeline-filters" id="pipelineFiltersPage"></div>
+                        <div class="pipeline-list" id="pipelineListPage"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- KANBAN PAGE -->
+            <div class="page-view" id="page-kanban">
+                <header class="header">
+                    <div class="header-left"><h2>Kanban View</h2><p>Work items by status</p></div>
+                    <div class="header-actions">
+                        <div class="pipeline-filters" id="kanbanFilters"></div>
+                    </div>
+                </header>
+                <div class="kanban-container" id="kanbanContainer"></div>
+            </div>
+
+            <!-- RESOURCES PAGE -->
+            <div class="page-view" id="page-resources">
+                <header class="header">
+                    <div class="header-left"><h2>Resources</h2><p>Team members and capacity</p></div>
+                    <div class="header-actions">
+                        <button class="btn" onclick="downloadTemplate('resources')">Template</button>
+                        <button class="btn btn-primary" onclick="openResourceModal()">+ Add Resource</button>
+                    </div>
+                </header>
+                <div class="resources-grid" id="resourcesGrid"></div>
+            </div>
+
+            <!-- SKILLS PAGE -->
+            <div class="page-view" id="page-skills">
+                <header class="header">
+                    <div class="header-left"><h2>Skills Matrix</h2><p>Resource capabilities by category</p></div>
+                    <div class="header-actions">
+                        <button class="btn" onclick="downloadTemplate('skills')">Template</button>
+                        <button class="btn btn-primary" onclick="openCategoryModal()">+ Add Category</button>
+                    </div>
+                </header>
+                <div class="full-card">
+                    <div class="card-header"><span class="card-title">0 = None · 1 = Basic · 2 = Developing · 3 = Competent · 4 = Advanced · 5 = Expert</span></div>
+                    <div class="card-body">
+                        <div class="skills-container"><table class="skills-table" id="skillsTable"></table></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CAPACITY PAGE -->
+            <div class="page-view" id="page-capacity">
+                <header class="header">
+                    <div class="header-left"><h2>Capacity Report</h2><p>FTE % utilisation per week</p></div>
+                    <div class="header-actions"><button class="btn" onclick="exportCapacity()">Export CSV</button></div>
+                </header>
+                <div class="full-card">
+                    <div class="card-header"><span class="card-title">WEEKLY UTILISATION (FTE %)</span></div>
+                    <div class="card-body"><div class="heatmap-container"><table class="heatmap-table" id="heatmapTableFull"></table></div></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- WORK ITEM MODAL -->
+    <div class="modal-overlay" id="workItemModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="wiModalTitle">New Work Item</h3>
+                <button class="modal-close" onclick="closeModal('workItemModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editWiId">
+                <div class="form-group">
+                    <label class="form-label">Title *</label>
+                    <input type="text" class="form-input" id="wiTitle" placeholder="e.g. HR Dashboard Phase 2">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Portfolio Item</label>
+                        <select class="form-select" id="wiPortfolioItem">
+                            <option value="pstom">PSTOM</option>
+                            <option value="integration">Integration</option>
+                            <option value="strategic">Strategic</option>
+                            <option value="adhoc">Ad-hoc</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Work Item Category</label>
+                        <select class="form-select" id="wiCategory"></select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Complexity</label>
+                        <select class="form-select" id="wiComplexity" onchange="updateEffortTotal()">
+                            <option value="1">1 - Simple</option>
+                            <option value="2">2 - Low</option>
+                            <option value="3" selected>3 - Medium</option>
+                            <option value="4">4 - High</option>
+                            <option value="5">5 - Complex</option>
+                        </select>
+                        <div class="form-hint">Affects capacity estimation</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Status</label>
+                        <select class="form-select" id="wiStatus">
+                            <option value="upcoming">Upcoming</option>
+                            <option value="progress">In Progress</option>
+                            <option value="blocked">Blocked</option>
+                            <option value="complete">Complete</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Effort Allocations - Multi-week, multi-resource -->
+                <div class="form-group">
+                    <label class="form-label">Effort Allocations</label>
+                    <div class="effort-section">
+                        <div class="effort-header">
+                            <span>Week / Resource Name / Days</span>
+                            <button class="btn btn-small" onclick="addEffortRow()">+ Add Row</button>
+                        </div>
+                        <div id="effortRows"></div>
+                        <div class="effort-total">
+                            <span class="effort-total-label">Total Effort</span>
+                            <span class="effort-total-value" id="effortTotalValue">0 days</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="suggestions" id="suggestions">
+                    <div class="suggestions-title">💡 Suggested Resources</div>
+                    <div class="suggestion-list" id="suggestionList"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('workItemModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="saveWorkItem()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESOURCE MODAL -->
+    <div class="modal-overlay" id="resourceModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="resModalTitle">New Resource</h3>
+                <button class="modal-close" onclick="closeModal('resourceModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editResId">
+                <div class="form-group">
+                    <label class="form-label">Role *</label>
+                    <select class="form-select" id="resRole" onchange="updateAutoId()">
+                        <option value="">-- Select Role --</option>
+                        <option value="Change Manager">Change Manager</option>
+                        <option value="Head of Change">Head of Change</option>
+                        <option value="Project Manager">Project Manager</option>
+                        <option value="Head of PMO">Head of PMO</option>
+                        <option value="Project Analyst">Project Analyst</option>
+                        <option value="Business Analyst">Business Analyst</option>
+                        <option value="Project Support Officer">Project Support Officer</option>
+                        <option value="Director of Change">Director of Change</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Auto-Generated ID</label>
+                        <div class="auto-id-display">
+                            <span class="auto-id-value" id="autoIdValue">--</span>
+                            <span class="auto-id-hint">Based on role</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Name *</label>
+                        <input type="text" class="form-input" id="resName" placeholder="e.g. David Chen">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Total FTE</label>
+                        <input type="number" class="form-input" id="resFTE" step="0.1" value="1.0" min="0.1" max="1.0">
+                        <div class="form-hint">1.0 FTE = 35 hrs/week = 5 days</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Baseline Commitment</label>
+                        <input type="number" class="form-input" id="resBaseline" step="0.1" value="0" min="0" max="1.0">
+                        <div class="form-hint">FTE reserved for BAU work</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('resourceModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="saveResource()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CATEGORY MODAL -->
+    <div class="modal-overlay" id="categoryModal">
+        <div class="modal" style="max-width:400px">
+            <div class="modal-header">
+                <h3 class="modal-title">Add Work Item Category</h3>
+                <button class="modal-close" onclick="closeModal('categoryModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Category Name</label>
+                    <input type="text" class="form-input" id="newCategoryName" placeholder="e.g. Process Mapping">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('categoryModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="addCategory()">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast"></div>
+
+    <!-- Supabase JS (uncomment when ready to use) -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script> -->
+    
+    <!-- App Logic -->
+    <script src="app.js"></script>
+</body>
+</html>
