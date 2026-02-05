@@ -116,7 +116,3 @@ function downloadTemplate(type){let csv='';if(type==='workitems')csv='ID,Title,P
 
 // Init
 document.addEventListener('DOMContentLoaded',()=>{load();renderDashboard();});
-JSEOF
-Output
-
-exit code 0
