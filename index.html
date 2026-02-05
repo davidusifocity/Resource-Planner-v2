@@ -9,7 +9,6 @@
 </head>
 <body>
     <div class="dashboard">
-        <!-- Sidebar -->
         <aside class="sidebar">
             <div class="logo">
                 <h1>CSU RESOURCE PLANNER<span>Change Support Unit</span></h1>
@@ -53,9 +52,8 @@
             </div>
         </aside>
 
-        <!-- Main Content -->
         <main class="main-content">
-            <!-- DASHBOARD PAGE -->
+            <!-- DASHBOARD -->
             <div class="page-view active" id="page-dashboard">
                 <header class="header">
                     <div class="header-left"><h2>Dashboard</h2><p>4-week rolling view</p></div>
@@ -96,7 +94,7 @@
                 </div>
             </div>
 
-            <!-- BACKLOG PAGE -->
+            <!-- BACKLOG -->
             <div class="page-view" id="page-pipeline">
                 <header class="header">
                     <div class="header-left"><h2>Work Backlog</h2><p>All work items</p></div>
@@ -114,18 +112,16 @@
                 </div>
             </div>
 
-            <!-- KANBAN PAGE -->
+            <!-- KANBAN -->
             <div class="page-view" id="page-kanban">
                 <header class="header">
                     <div class="header-left"><h2>Kanban View</h2><p>Work items by status</p></div>
-                    <div class="header-actions">
-                        <div class="pipeline-filters" id="kanbanFilters"></div>
-                    </div>
+                    <div class="header-actions"><div class="pipeline-filters" id="kanbanFilters"></div></div>
                 </header>
                 <div class="kanban-container" id="kanbanContainer"></div>
             </div>
 
-            <!-- RESOURCES PAGE -->
+            <!-- RESOURCES -->
             <div class="page-view" id="page-resources">
                 <header class="header">
                     <div class="header-left"><h2>Resources</h2><p>Team members and capacity</p></div>
@@ -137,7 +133,7 @@
                 <div class="resources-grid" id="resourcesGrid"></div>
             </div>
 
-            <!-- SKILLS PAGE -->
+            <!-- SKILLS MATRIX -->
             <div class="page-view" id="page-skills">
                 <header class="header">
                     <div class="header-left"><h2>Skills Matrix</h2><p>Resource capabilities by work item category</p></div>
@@ -148,13 +144,11 @@
                 </header>
                 <div class="full-card">
                     <div class="card-header"><span class="card-title">0 = None · 1 = Basic · 2 = Developing · 3 = Competent · 4 = Advanced · 5 = Expert</span></div>
-                    <div class="card-body">
-                        <div class="skills-container"><table class="skills-table" id="skillsTable"></table></div>
-                    </div>
+                    <div class="card-body"><div class="skills-container"><table class="skills-table" id="skillsTable"></table></div></div>
                 </div>
             </div>
 
-            <!-- CAPACITY PAGE -->
+            <!-- CAPACITY -->
             <div class="page-view" id="page-capacity">
                 <header class="header">
                     <div class="header-left"><h2>Capacity Report</h2><p>FTE % utilisation per week</p></div>
@@ -192,8 +186,14 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Work Item Category</label>
-                        <select class="form-select" id="wiCategory"></select>
+                        <label class="form-label">Work Item Categories</label>
+                        <div class="multi-select-dropdown" id="wiCategoryDropdown">
+                            <div class="multi-select-trigger" onclick="toggleCategoryDropdown()">
+                                <span id="wiCategoryDisplay">-- Select Categories --</span>
+                                <span class="multi-select-arrow">▾</span>
+                            </div>
+                            <div class="multi-select-options" id="wiCategoryOptions"></div>
+                        </div>
                     </div>
                 </div>
                 <div class="form-row">
@@ -213,14 +213,21 @@
                         <div class="form-hint">Working days the item spans</div>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Status</label>
-                    <select class="form-select" id="wiStatus">
-                        <option value="upcoming">Upcoming</option>
-                        <option value="progress">In Progress</option>
-                        <option value="blocked">Blocked</option>
-                        <option value="complete">Complete</option>
-                    </select>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Start Date</label>
+                        <input type="date" class="form-input" id="wiStartDate">
+                        <div class="form-hint">Status auto-derives from date</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Status</label>
+                        <select class="form-select" id="wiStatus">
+                            <option value="upcoming">Upcoming</option>
+                            <option value="progress">In Progress</option>
+                            <option value="blocked">Blocked</option>
+                            <option value="complete">Complete</option>
+                        </select>
+                    </div>
                 </div>
 
                 <!-- Estimation Summary -->
@@ -280,14 +287,13 @@
                     <label class="form-label">Role *</label>
                     <select class="form-select" id="resRole" onchange="updateAutoId()">
                         <option value="">-- Select Role --</option>
-                        <option value="Change Manager">Change Manager</option>
-                        <option value="Head of Change">Head of Change</option>
-                        <option value="Project Manager">Project Manager</option>
-                        <option value="Head of PMO">Head of PMO</option>
-                        <option value="Project Analyst">Project Analyst</option>
-                        <option value="Business Analyst">Business Analyst</option>
-                        <option value="Project Support Officer">Project Support Officer</option>
                         <option value="Director of Change">Director of Change</option>
+                        <option value="Head of Change">Head of Change</option>
+                        <option value="Head of PMO">Head of PMO</option>
+                        <option value="Project Manager">Project Manager</option>
+                        <option value="Change Manager">Change Manager</option>
+                        <option value="Project Business Analyst">Project Business Analyst</option>
+                        <option value="Project Support Officer">Project Support Officer</option>
                     </select>
                 </div>
                 <div class="form-row">
@@ -300,7 +306,7 @@
                     </div>
                     <div class="form-group">
                         <label class="form-label">Name *</label>
-                        <input type="text" class="form-input" id="resName" placeholder="e.g. David Chen">
+                        <input type="text" class="form-input" id="resName" placeholder="e.g. David Usifo">
                     </div>
                 </div>
                 <div class="form-row">
@@ -323,7 +329,7 @@
         </div>
     </div>
 
-    <!-- CATEGORY MODAL (Add / Edit) -->
+    <!-- CATEGORY MODAL -->
     <div class="modal-overlay" id="categoryModal">
         <div class="modal" style="max-width:420px">
             <div class="modal-header">
@@ -344,10 +350,7 @@
         </div>
     </div>
 
-    <!-- Toast Notification -->
     <div class="toast" id="toast"></div>
-
-    <!-- App Logic -->
     <script src="app.js" defer></script>
 </body>
 </html>
