@@ -23,7 +23,7 @@
                 </div>
                 <div class="nav-item" data-page="pipeline">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                    Work Pipeline
+                    Work Backlog
                 </div>
                 <div class="nav-item" data-page="kanban">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="15" rx="1"/></svg>
@@ -72,7 +72,7 @@
                 </div>
                 <div class="dashboard-grid">
                     <div class="card">
-                        <div class="card-header"><span class="card-title">WORK PIPELINE</span><button class="card-action" onclick="navigateTo('pipeline')">→</button></div>
+                        <div class="card-header"><span class="card-title">WORK BACKLOG</span><button class="card-action" onclick="navigateTo('pipeline')">→</button></div>
                         <div class="card-body">
                             <div class="pipeline-filters" id="dashboardFilters"></div>
                             <div class="pipeline-list" id="pipelineListDashboard"></div>
@@ -96,10 +96,10 @@
                 </div>
             </div>
 
-            <!-- PIPELINE PAGE -->
+            <!-- BACKLOG PAGE -->
             <div class="page-view" id="page-pipeline">
                 <header class="header">
-                    <div class="header-left"><h2>Work Pipeline</h2><p>All work items</p></div>
+                    <div class="header-left"><h2>Work Backlog</h2><p>All work items</p></div>
                     <div class="header-actions">
                         <button class="btn" onclick="downloadTemplate('workitems')">Template</button>
                         <button class="btn btn-primary" onclick="openWorkItemModal()">+ Work Item</button>
@@ -140,7 +140,7 @@
             <!-- SKILLS PAGE -->
             <div class="page-view" id="page-skills">
                 <header class="header">
-                    <div class="header-left"><h2>Skills Matrix</h2><p>Resource capabilities by category</p></div>
+                    <div class="header-left"><h2>Skills Matrix</h2><p>Resource capabilities by work item category</p></div>
                     <div class="header-actions">
                         <button class="btn" onclick="downloadTemplate('skills')">Template</button>
                         <button class="btn btn-primary" onclick="openCategoryModal()">+ Add Category</button>
@@ -198,43 +198,63 @@
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Complexity</label>
-                        <select class="form-select" id="wiComplexity" onchange="updateEffortTotal()">
-                            <option value="1">1 - Simple</option>
-                            <option value="2">2 - Low</option>
-                            <option value="3" selected>3 - Medium</option>
-                            <option value="4">4 - High</option>
-                            <option value="5">5 - Complex</option>
+                        <label class="form-label">Size / Effort</label>
+                        <select class="form-select" id="wiSize" onchange="updateEstimation()">
+                            <option value="S">S – Small</option>
+                            <option value="M" selected>M – Medium</option>
+                            <option value="L">L – Large</option>
+                            <option value="XL">XL – Extra Large</option>
                         </select>
-                        <div class="form-hint">Affects capacity estimation</div>
+                        <div class="form-hint" id="sizeHint">M = 7 effort days</div>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Status</label>
-                        <select class="form-select" id="wiStatus">
-                            <option value="upcoming">Upcoming</option>
-                            <option value="progress">In Progress</option>
-                            <option value="blocked">Blocked</option>
-                            <option value="complete">Complete</option>
-                        </select>
+                        <label class="form-label">Duration (calendar days)</label>
+                        <input type="number" class="form-input" id="wiDuration" value="20" min="1" max="260" step="1" oninput="updateEstimation()">
+                        <div class="form-hint">Working days the item spans</div>
                     </div>
                 </div>
-                
-                <!-- Effort Allocations - Multi-week, multi-resource -->
                 <div class="form-group">
-                    <label class="form-label">Effort Allocations</label>
+                    <label class="form-label">Status</label>
+                    <select class="form-select" id="wiStatus">
+                        <option value="upcoming">Upcoming</option>
+                        <option value="progress">In Progress</option>
+                        <option value="blocked">Blocked</option>
+                        <option value="complete">Complete</option>
+                    </select>
+                </div>
+
+                <!-- Estimation Summary -->
+                <div class="estimation-summary" id="estimationSummary">
+                    <div class="estimation-row">
+                        <span class="estimation-label">Effort Days</span>
+                        <span class="estimation-value" id="estEffortDays">7</span>
+                    </div>
+                    <div class="estimation-row">
+                        <span class="estimation-label">Duration</span>
+                        <span class="estimation-value" id="estDuration">20 days</span>
+                    </div>
+                    <div class="estimation-row">
+                        <span class="estimation-label">FTE % Required</span>
+                        <span class="estimation-value estimation-highlight" id="estFTE">35%</span>
+                    </div>
+                </div>
+
+                <!-- Resource Assignments -->
+                <div class="form-group">
+                    <label class="form-label">Resource Assignments</label>
                     <div class="effort-section">
                         <div class="effort-header">
-                            <span>Week / Resource Name / Days</span>
-                            <button class="btn btn-small" onclick="addEffortRow()">+ Add Row</button>
+                            <span>Assign resources — load splits evenly</span>
+                            <button class="btn btn-small" onclick="addAssignmentRow()">+ Add Resource</button>
                         </div>
-                        <div id="effortRows"></div>
+                        <div id="assignmentRows"></div>
                         <div class="effort-total">
-                            <span class="effort-total-label">Total Effort</span>
-                            <span class="effort-total-value" id="effortTotalValue">0 days</span>
+                            <span class="effort-total-label">FTE % per person</span>
+                            <span class="effort-total-value" id="ftePerPerson">--</span>
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="suggestions" id="suggestions">
                     <div class="suggestions-title">💡 Suggested Resources</div>
                     <div class="suggestion-list" id="suggestionList"></div>
@@ -303,14 +323,15 @@
         </div>
     </div>
 
-    <!-- CATEGORY MODAL -->
+    <!-- CATEGORY MODAL (Add / Edit) -->
     <div class="modal-overlay" id="categoryModal">
-        <div class="modal" style="max-width:400px">
+        <div class="modal" style="max-width:420px">
             <div class="modal-header">
-                <h3 class="modal-title">Add Work Item Category</h3>
+                <h3 class="modal-title" id="catModalTitle">Add Work Item Category</h3>
                 <button class="modal-close" onclick="closeModal('categoryModal')">×</button>
             </div>
             <div class="modal-body">
+                <input type="hidden" id="editCatOriginal">
                 <div class="form-group">
                     <label class="form-label">Category Name</label>
                     <input type="text" class="form-input" id="newCategoryName" placeholder="e.g. Process Mapping">
@@ -318,7 +339,7 @@
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="closeModal('categoryModal')">Cancel</button>
-                <button class="btn btn-primary" onclick="addCategory()">Add</button>
+                <button class="btn btn-primary" id="catModalSaveBtn" onclick="saveCategory()">Add</button>
             </div>
         </div>
     </div>
@@ -326,9 +347,6 @@
     <!-- Toast Notification -->
     <div class="toast" id="toast"></div>
 
-    <!-- Supabase JS (uncomment when ready to use) -->
-    <!-- <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script> -->
-    
     <!-- App Logic -->
     <script src="app.js" defer></script>
 </body>
