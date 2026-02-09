@@ -35,10 +35,6 @@
             </nav>
             <nav class="nav-section">
                 <div class="nav-label">ANALYSIS</div>
-                <div class="nav-item" data-page="skills">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
-                    Skills Matrix
-                </div>
                 <div class="nav-item" data-page="capacity">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                     Capacity
@@ -77,20 +73,13 @@
                         </div>
                     </div>
                     <div class="card">
-                        <div class="card-header"><span class="card-title">UTILISATION HEATMAP</span><button class="card-action" onclick="navigateTo('capacity')">→</button></div>
-                        <div class="card-body"><div class="heatmap-container"><table class="heatmap-table" id="heatmapTable"></table></div></div>
-                    </div>
-                    <div class="card">
                         <div class="card-header"><span class="card-title">ALLOCATION</span><button class="card-action" onclick="navigateTo('resources')">→</button></div>
                         <div class="card-body"><div class="allocation-list" id="allocationListDashboard"></div></div>
                     </div>
-                    <div class="card">
-                        <div class="card-header"><span class="card-title">CATEGORY COVERAGE</span><button class="card-action" onclick="navigateTo('skills')">→</button></div>
-                        <div class="card-body">
-                            <div class="category-legend"><span class="cap">Capacity</span><span class="dem">Demand</span></div>
-                            <div class="category-coverage" id="categoryCoverage"></div>
-                        </div>
-                    </div>
+                </div>
+                <div class="card" style="margin-top:18px">
+                    <div class="card-header"><span class="card-title">UTILISATION HEATMAP</span><button class="card-action" onclick="navigateTo('capacity')">→</button></div>
+                    <div class="card-body"><div class="heatmap-container"><table class="heatmap-table" id="heatmapTable"></table></div></div>
                 </div>
             </div>
 
@@ -100,6 +89,7 @@
                     <div class="header-left"><h2>Work Backlog</h2><p>All work items</p></div>
                     <div class="header-actions">
                         <button class="btn" onclick="downloadTemplate('workitems')">Template</button>
+                        <label class="btn" style="cursor:pointer"><input type="file" accept=".csv" style="display:none" onchange="importWorkItemsCSV(this)">Import CSV</label>
                         <button class="btn btn-primary" onclick="openWorkItemModal()">+ Work Item</button>
                     </div>
                 </header>
@@ -127,25 +117,11 @@
                     <div class="header-left"><h2>Resources</h2><p>Team members and capacity</p></div>
                     <div class="header-actions">
                         <button class="btn" onclick="downloadTemplate('resources')">Template</button>
+                        <label class="btn" style="cursor:pointer"><input type="file" accept=".csv" style="display:none" onchange="importResourcesCSV(this)">Import CSV</label>
                         <button class="btn btn-primary" onclick="openResourceModal()">+ Add Resource</button>
                     </div>
                 </header>
                 <div class="resources-grid" id="resourcesGrid"></div>
-            </div>
-
-            <!-- SKILLS MATRIX -->
-            <div class="page-view" id="page-skills">
-                <header class="header">
-                    <div class="header-left"><h2>Skills Matrix</h2><p>Resource capabilities by work item category</p></div>
-                    <div class="header-actions">
-                        <button class="btn" onclick="downloadTemplate('skills')">Template</button>
-                        <button class="btn btn-primary" onclick="openCategoryModal()">+ Add Category</button>
-                    </div>
-                </header>
-                <div class="full-card">
-                    <div class="card-header"><span class="card-title">0 = None · 1 = Basic · 2 = Developing · 3 = Competent · 4 = Advanced · 5 = Expert</span></div>
-                    <div class="card-body"><div class="skills-container"><table class="skills-table" id="skillsTable"></table></div></div>
-                </div>
             </div>
 
             <!-- CAPACITY -->
@@ -186,47 +162,42 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Work Item Categories</label>
-                        <div class="multi-select-dropdown" id="wiCategoryDropdown">
-                            <div class="multi-select-trigger" onclick="toggleCategoryDropdown()">
-                                <span id="wiCategoryDisplay">-- Select Categories --</span>
-                                <span class="multi-select-arrow">▾</span>
-                            </div>
-                            <div class="multi-select-options" id="wiCategoryOptions"></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
                         <label class="form-label">Size / Effort</label>
                         <select class="form-select" id="wiSize" onchange="updateEstimation()">
-                            <option value="S">S – Small</option>
-                            <option value="M" selected>M – Medium</option>
-                            <option value="L">L – Large</option>
-                            <option value="XL">XL – Extra Large</option>
+                            <option value="XS">XS — Extra Small (1d)</option>
+                            <option value="S">S — Small (3d)</option>
+                            <option value="M" selected>M — Medium (7d)</option>
+                            <option value="L">L — Large (15d)</option>
+                            <option value="XL">XL — Extra Large (30d)</option>
+                            <option value="XXL">XXL — Programme (50d)</option>
                         </select>
                         <div class="form-hint" id="sizeHint">M = 7 effort days</div>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Duration (calendar days)</label>
-                        <input type="number" class="form-input" id="wiDuration" value="20" min="1" max="260" step="1" oninput="updateEstimation()">
-                        <div class="form-hint">Working days the item spans</div>
-                    </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Start Date</label>
-                        <input type="date" class="form-input" id="wiStartDate">
-                        <div class="form-hint">Status auto-derives from date</div>
+                        <label class="form-label">Duration (working days)</label>
+                        <input type="number" class="form-input" id="wiDuration" value="20" min="1" max="260" step="1" oninput="updateEstimation()">
+                        <div class="form-hint">Working days the item spans</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Status</label>
-                        <select class="form-select" id="wiStatus">
+                        <select class="form-select" id="wiStatus" onchange="onStatusChange()">
                             <option value="upcoming">Upcoming</option>
                             <option value="progress">In Progress</option>
                             <option value="blocked">Blocked</option>
                             <option value="complete">Complete</option>
                         </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Start Date</label>
+                        <input type="date" class="form-input" id="wiStartDate" onchange="onDateChange()">
+                        <div class="form-hint" id="startDateHint">Click to select from calendar</div>
+                    </div>
+                    <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:28px">
+                        <button class="btn btn-small" type="button" onclick="clearStartDate()" style="width:100%">Clear Date</button>
                     </div>
                 </div>
 
@@ -260,11 +231,6 @@
                             <span class="effort-total-value" id="ftePerPerson">--</span>
                         </div>
                     </div>
-                </div>
-
-                <div class="suggestions" id="suggestions">
-                    <div class="suggestions-title">💡 Suggested Resources</div>
-                    <div class="suggestion-list" id="suggestionList"></div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -329,28 +295,25 @@
         </div>
     </div>
 
-    <!-- CATEGORY MODAL -->
-    <div class="modal-overlay" id="categoryModal">
-        <div class="modal" style="max-width:420px">
+    <!-- CONFIRM MODAL -->
+    <div class="modal-overlay" id="confirmModal">
+        <div class="modal" style="max-width:460px">
             <div class="modal-header">
-                <h3 class="modal-title" id="catModalTitle">Add Work Item Category</h3>
-                <button class="modal-close" onclick="closeModal('categoryModal')">×</button>
+                <h3 class="modal-title" id="confirmTitle">Confirm</h3>
+                <button class="modal-close" onclick="closeModal('confirmModal')">×</button>
             </div>
             <div class="modal-body">
-                <input type="hidden" id="editCatOriginal">
-                <div class="form-group">
-                    <label class="form-label">Category Name</label>
-                    <input type="text" class="form-input" id="newCategoryName" placeholder="e.g. Process Mapping">
-                </div>
+                <p id="confirmMessage" style="font-size:var(--fs-small);color:var(--text-secondary);line-height:1.6"></p>
+                <div id="confirmDetails" style="margin-top:12px;padding:12px;background:var(--bg-tertiary);border-radius:6px;font-size:var(--fs-xs);color:var(--text-muted);display:none"></div>
             </div>
             <div class="modal-footer">
-                <button class="btn" onclick="closeModal('categoryModal')">Cancel</button>
-                <button class="btn btn-primary" id="catModalSaveBtn" onclick="saveCategory()">Add</button>
+                <button class="btn" onclick="closeModal('confirmModal')">Cancel</button>
+                <button class="btn btn-danger" id="confirmBtn" onclick="">Confirm</button>
             </div>
         </div>
     </div>
 
-    <div class="toast" id="toast"></div>
+    <div class="toast" id="toast"><span id="toastMsg"></span><button class="toast-undo" id="toastUndo" onclick="undoLastAction()" style="display:none">Undo</button></div>
     <script src="app.js" defer></script>
 </body>
 </html>
