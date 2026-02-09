@@ -1,20 +1,18 @@
-/* CSU Resource Planner v4 */
+/* CSU Resource Planner v5 */
+/* Removed: skills matrix, categories, suggestions panel */
+/* Added: CSV import, undo, confirm modal, date dropdown, working-day calculations */
+
 const DAYS_PER_FTE = 5;
 let workItems = [];
 let resources = [];
-let categories = [
-    'Change Management', 'Impact Assessment', 'Project Delivery',
-    'Business Analysis', 'Service Design', 'Benefits Measurement',
-    'Performance Measurement', 'Process Mapping', 'Stakeholder Engagement',
-    'Data Analysis', 'Communications', 'Training & Development'
-];
 let lastUpdated = null;
 let currentPage = 'dashboard';
 let currentFilters = { portfolioItem: 'all', resource: 'all' };
 let currentAssignments = [];
-let currentCategories = []; // multi-select categories for current work item
+let undoStack = []; // { type, data, description }
+let toastTimer = null;
 
-const sizeDefaults = { S: 3, M: 7, L: 15, XL: 30 };
+const sizeDefaults = { XS: 1, S: 3, M: 7, L: 15, XL: 30, XXL: 50 };
 
 const avatarColors = [
     'linear-gradient(135deg,#1a7aab,#0d5a80)',
@@ -39,9 +37,9 @@ const rolePrefixes = {
     'Project Business Analyst': 'PBA',
     'Project Support Officer': 'PSO'
 };
+const validRoles = Object.keys(rolePrefixes);
 
 // ─── Week System ─────────────────────────────────────────
-// Generate Monday-start dates for rolling 4 weeks
 function getWeekStartDates() {
     const dates = [];
     const today = new Date();
@@ -64,29 +62,32 @@ const weekLabels = weekStartDates.map(ws =>
 // ─── Storage ─────────────────────────────────────────────
 function save() {
     lastUpdated = new Date().toISOString();
-    localStorage.setItem('csu_v4', JSON.stringify({ workItems, resources, categories, lastUpdated }));
+    localStorage.setItem('csu_v5', JSON.stringify({ workItems, resources, lastUpdated }));
     updateLastUpdated();
 }
+
 function load() {
     try {
-        const d = JSON.parse(localStorage.getItem('csu_v4'));
+        const d = JSON.parse(localStorage.getItem('csu_v5'));
         if (d) {
-            workItems = d.workItems || [];
-            resources = d.resources || [];
-            categories = d.categories || categories;
+            workItems = validateWorkItems(d.workItems || []);
+            resources = validateResources(d.resources || []);
             lastUpdated = d.lastUpdated;
-            // Migrate: if any work item has .category (string), convert to .categories (array)
+            // Re-derive statuses on load based on current date
             workItems.forEach(w => {
-                if (typeof w.category === 'string' && w.category && !w.categories) {
-                    w.categories = [w.category];
-                    delete w.category;
+                if (w.status !== 'blocked' && w.status !== 'complete') {
+                    w.status = deriveStatus(w.startDate, w.duration);
                 }
-                if (!w.categories) w.categories = [];
             });
         }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+        console.error('Failed to load data:', e);
+        workItems = [];
+        resources = [];
+    }
     updateLastUpdated();
 }
+
 function updateLastUpdated() {
     const el = document.getElementById('lastUpdated');
     if (lastUpdated) {
@@ -95,16 +96,69 @@ function updateLastUpdated() {
     }
 }
 
-// ─── Utilities ───────────────────────────────────────────
-function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-function toast(msg, err) {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast show' + (err ? ' error' : '');
-    setTimeout(() => t.className = 'toast', 3000);
+// ─── Data Validation ─────────────────────────────────────
+function validateWorkItems(items) {
+    if (!Array.isArray(items)) return [];
+    return items.filter(w => {
+        if (!w || typeof w !== 'object') return false;
+        if (!w.id || typeof w.id !== 'string') return false;
+        if (!w.title || typeof w.title !== 'string') return false;
+        return true;
+    }).map(w => ({
+        id: String(w.id),
+        title: String(w.title || '').substring(0, 200),
+        portfolioItem: ['pstom', 'integration', 'strategic', 'adhoc'].includes(w.portfolioItem) ? w.portfolioItem : 'adhoc',
+        size: ['XS', 'S', 'M', 'L', 'XL', 'XXL'].includes(w.size) ? w.size : 'M',
+        duration: Math.max(1, Math.min(260, parseInt(w.duration) || 20)),
+        startDate: isValidDateStr(w.startDate) ? w.startDate : '',
+        status: ['upcoming', 'progress', 'blocked', 'complete'].includes(w.status) ? w.status : 'upcoming',
+        assignedResources: Array.isArray(w.assignedResources) ? w.assignedResources.filter(r => typeof r === 'string') : []
+    }));
 }
+
+function validateResources(items) {
+    if (!Array.isArray(items)) return [];
+    return items.filter(r => {
+        if (!r || typeof r !== 'object') return false;
+        if (!r.id || typeof r.id !== 'string') return false;
+        if (!r.name || typeof r.name !== 'string') return false;
+        return true;
+    }).map(r => ({
+        id: String(r.id),
+        name: String(r.name || '').substring(0, 100),
+        role: validRoles.includes(r.role) ? r.role : '',
+        totalFTE: Math.max(0.1, Math.min(1.0, parseFloat(r.totalFTE) || 1)),
+        baselineCommitment: Math.max(0, Math.min(1.0, parseFloat(r.baselineCommitment) || 0))
+    }));
+}
+
+function isValidDateStr(s) {
+    if (!s || typeof s !== 'string') return false;
+    const d = new Date(s + 'T00:00:00');
+    return !isNaN(d.getTime());
+}
+
+// ─── Utilities ───────────────────────────────────────────
+function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+function toast(msg, err, undoable) {
+    const t = document.getElementById('toast');
+    const msgEl = document.getElementById('toastMsg');
+    const undoBtn = document.getElementById('toastUndo');
+    msgEl.textContent = msg;
+    t.className = 'toast show' + (err ? ' error' : '');
+    undoBtn.style.display = undoable ? 'inline-block' : 'none';
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+        t.className = 'toast';
+        // Clear undo stack after toast expires
+        if (undoable) undoStack = [];
+    }, 6000);
+}
+
 function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 function getRes(id) { return resources.find(r => r.id === id); }
+
 function heatClass(v) {
     if (v <= 0) return 'heat-available';
     if (v < 70) return 'heat-available';
@@ -114,19 +168,66 @@ function heatClass(v) {
     if (v <= 120) return 'heat-over';
     return 'heat-critical';
 }
+
 function getResourceColor(rid) {
     const idx = resources.findIndex(r => r.id === rid);
     return idx >= 0 ? avatarColors[idx % avatarColors.length] : avatarColors[0];
 }
+
 function getInitials(name) { return (name || '').split(' ').map(n => n[0]).join('').toUpperCase(); }
+
 function toDateStr(d) {
-    // Return YYYY-MM-DD string from Date object
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
+
 function parseDate(s) {
     if (!s) return null;
     const d = new Date(s + 'T00:00:00');
     return isNaN(d.getTime()) ? null : d;
+}
+
+// ─── Undo System ─────────────────────────────────────────
+function pushUndo(type, data, description) {
+    undoStack.push({ type, data: JSON.parse(JSON.stringify(data)), description });
+    // Keep only last 5
+    if (undoStack.length > 5) undoStack.shift();
+}
+
+function undoLastAction() {
+    if (!undoStack.length) return;
+    const action = undoStack.pop();
+    if (action.type === 'deleteWorkItem') {
+        workItems.push(action.data);
+    } else if (action.type === 'deleteResource') {
+        resources.push(action.data.resource);
+        // Restore resource references in work items
+        action.data.affectedItems.forEach(ai => {
+            const wi = workItems.find(w => w.id === ai.id);
+            if (wi) wi.assignedResources = ai.assignedResources;
+        });
+    }
+    save();
+    renderCurrentPage();
+    toast('Undone: ' + action.description, false, false);
+}
+
+// ─── Confirm Modal ───────────────────────────────────────
+function showConfirm(title, message, details, onConfirm) {
+    document.getElementById('confirmTitle').textContent = title;
+    document.getElementById('confirmMessage').textContent = message;
+    const detailsEl = document.getElementById('confirmDetails');
+    if (details) {
+        detailsEl.innerHTML = details;
+        detailsEl.style.display = 'block';
+    } else {
+        detailsEl.style.display = 'none';
+    }
+    const btn = document.getElementById('confirmBtn');
+    btn.onclick = function () {
+        closeModal('confirmModal');
+        onConfirm();
+    };
+    document.getElementById('confirmModal').classList.add('active');
 }
 
 // ─── Auto ID ─────────────────────────────────────────────
@@ -137,6 +238,7 @@ function generateResourceId(role) {
     const next = existing.length > 0 ? Math.max(...existing) + 1 : 1;
     return prefix + String(next).padStart(2, '0');
 }
+
 function updateAutoId() {
     const role = document.getElementById('resRole').value;
     const display = document.getElementById('autoIdValue');
@@ -144,17 +246,51 @@ function updateAutoId() {
     else { display.textContent = '--'; }
 }
 
-// ─── Status Derivation from Start Date ───────────────────
+// ─── Working Day Calculations ────────────────────────────
+// Count working days (Mon-Fri) between two dates inclusive
+function countWorkingDays(start, end) {
+    let count = 0;
+    const d = new Date(start);
+    while (d <= end) {
+        const dow = d.getDay();
+        if (dow !== 0 && dow !== 6) count++;
+        d.setDate(d.getDate() + 1);
+    }
+    return count;
+}
+
+// Add N working days to a date, returns the end date
+function addWorkingDays(start, numDays) {
+    const d = new Date(start);
+    let added = 0;
+    // The start day counts as day 1 if it's a working day
+    while (added < numDays) {
+        const dow = d.getDay();
+        if (dow !== 0 && dow !== 6) added++;
+        if (added < numDays) d.setDate(d.getDate() + 1);
+    }
+    return d;
+}
+
+// Get the working-day end date for a work item
+function getWorkItemEndDate(wi) {
+    const start = parseDate(wi.startDate);
+    if (!start) return null;
+    const dur = wi.duration || 20;
+    return addWorkingDays(start, dur);
+}
+
+// ─── Status Derivation ──────────────────────────────────
+// Uses working days only. Start date = first working day, duration = number of working days.
 function deriveStatus(startDate, duration) {
     if (!startDate) return 'upcoming';
     const start = parseDate(startDate);
     if (!start) return 'upcoming';
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(start.getDate() + (duration || 20));
+    const end = addWorkingDays(start, duration || 20);
     if (today < start) return 'upcoming';
-    if (today >= end) return 'complete';
+    if (today > end) return 'complete';
     return 'progress';
 }
 
@@ -177,18 +313,14 @@ function getWiPerPersonFTE(wi) {
 
 // ─── Determine which of the 4 rolling weeks a work item spans ─
 function getWiActiveWeeks(wi) {
-    // Returns array of 4 booleans: does this WI overlap each rolling week?
     const active = [false, false, false, false];
     const start = parseDate(wi.startDate);
     if (!start) {
-        // No start date: if status is progress, apply to all weeks; if upcoming, apply to none
-        if (wi.status === 'progress') return [true, true, true, true];
-        if (wi.status === 'blocked') return [true, true, true, true];
+        if (wi.status === 'progress' || wi.status === 'blocked') return [true, true, true, true];
         return [false, false, false, false];
     }
-    const dur = wi.duration || 20;
-    const end = new Date(start);
-    end.setDate(start.getDate() + dur - 1);
+    const end = getWorkItemEndDate(wi);
+    if (!end) return [false, false, false, false];
 
     for (let i = 0; i < 4; i++) {
         const weekStart = weekStartDates[i];
@@ -230,54 +362,74 @@ function calcResourceWeekDays(rid) {
     return wp.map(p => Math.round((p / 100) * avail * 10) / 10);
 }
 
-// ─── Multi-Category Dropdown ─────────────────────────────
-function populateCategoryCheckboxes() {
-    const c = document.getElementById('wiCategoryOptions');
-    c.innerHTML = categories.map(cat =>
-        '<label class="multi-select-option"><input type="checkbox" value="' + esc(cat) + '" ' +
-        (currentCategories.includes(cat) ? 'checked' : '') +
-        ' onchange="toggleCategory(this.value, this.checked)">' + esc(cat) + '</label>'
-    ).join('');
-    updateCategoryDisplay();
+// ─── Date & Status Coordination ──────────────────────────
+function onDateChange() {
+    syncStatusFromDate();
 }
 
-function toggleCategoryDropdown() {
-    const opts = document.getElementById('wiCategoryOptions');
-    opts.classList.toggle('open');
+function clearStartDate() {
+    document.getElementById('wiStartDate').value = '';
+    syncStatusFromDate();
 }
 
-function toggleCategory(cat, checked) {
-    if (checked && !currentCategories.includes(cat)) {
-        currentCategories.push(cat);
-    } else if (!checked) {
-        currentCategories = currentCategories.filter(c => c !== cat);
+function syncStatusFromDate() {
+    const dateVal = document.getElementById('wiStartDate').value;
+    const statusEl = document.getElementById('wiStatus');
+    const currentStatus = statusEl.value;
+
+    // Only auto-derive if NOT blocked or complete (user-controlled statuses)
+    if (currentStatus === 'blocked' || currentStatus === 'complete') {
+        updateStartDateHint();
+        return;
     }
-    updateCategoryDisplay();
-    renderSuggestions();
-}
 
-function updateCategoryDisplay() {
-    const el = document.getElementById('wiCategoryDisplay');
-    if (currentCategories.length === 0) {
-        el.textContent = '-- Select Categories --';
-        el.style.color = 'var(--text-muted)';
-    } else if (currentCategories.length <= 2) {
-        el.textContent = currentCategories.join(', ');
-        el.style.color = 'var(--text-primary)';
+    if (dateVal) {
+        const duration = parseInt(document.getElementById('wiDuration').value) || 20;
+        const derived = deriveStatus(dateVal, duration);
+        statusEl.value = derived;
     } else {
-        el.textContent = currentCategories.length + ' categories selected';
-        el.style.color = 'var(--text-primary)';
+        // No date — default to upcoming
+        if (currentStatus === 'progress') statusEl.value = 'upcoming';
     }
+    updateStartDateHint();
 }
 
-// Close dropdown when clicking outside
-document.addEventListener('click', function (e) {
-    const dd = document.getElementById('wiCategoryDropdown');
-    if (dd && !dd.contains(e.target)) {
-        const opts = document.getElementById('wiCategoryOptions');
-        if (opts) opts.classList.remove('open');
+function onStatusChange() {
+    const status = document.getElementById('wiStatus').value;
+    const dateVal = document.getElementById('wiStartDate').value;
+
+    // If user sets "In Progress" but no date, suggest today
+    if (status === 'progress' && !dateVal) {
+        document.getElementById('wiStartDate').value = toDateStr(new Date());
     }
-});
+    // If user sets "Upcoming" and date is in the past, clear date
+    if (status === 'upcoming' && dateVal) {
+        const start = parseDate(dateVal);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (start && start <= today) {
+            document.getElementById('wiStartDate').value = '';
+        }
+    }
+    updateStartDateHint();
+}
+
+function updateStartDateHint() {
+    const hint = document.getElementById('startDateHint');
+    const dateVal = document.getElementById('wiStartDate').value;
+    const status = document.getElementById('wiStatus').value;
+    if (dateVal && status !== 'blocked' && status !== 'complete') {
+        const duration = parseInt(document.getElementById('wiDuration').value) || 20;
+        const derived = deriveStatus(dateVal, duration);
+        const endDate = addWorkingDays(parseDate(dateVal), duration);
+        const label = derived === 'progress' ? 'In Progress' : derived === 'complete' ? 'Complete' : 'Upcoming';
+        hint.textContent = 'Auto-status: ' + label + ' · Ends ' + endDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    } else if (dateVal) {
+        hint.textContent = 'Date set (status manually controlled)';
+    } else {
+        hint.textContent = 'Click to select from calendar';
+    }
+}
 
 // ─── Estimation UI ───────────────────────────────────────
 function updateEstimation() {
@@ -309,22 +461,29 @@ function updateFTEPerPerson() {
 }
 
 // ─── Resource Assignment Rows ────────────────────────────
+function getAlreadyAssigned() {
+    return currentAssignments.filter(r => r);
+}
+
 function renderAssignmentRows() {
     const c = document.getElementById('assignmentRows');
     if (currentAssignments.length === 0) {
         c.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:var(--fs-xs)">No resources assigned. Click "+ Add Resource".</div>';
         return;
     }
-    c.innerHTML = currentAssignments.map((rid, i) =>
-        '<div class="assignment-row">' +
-        '<select class="form-select" onchange="updateAssignment(' + i + ',this.value)">' +
-        '<option value="">-- Select Resource --</option>' +
-        resources.map(r => '<option value="' + esc(r.id) + '" ' + (rid === r.id ? 'selected' : '') + '>' + esc(r.name) + ' (' + esc(r.id) + ')</option>').join('') +
-        '</select>' +
-        '<div class="assignment-fte" id="assignFte' + i + '"></div>' +
-        '<button class="delete-btn" onclick="removeAssignment(' + i + ')">×</button>' +
-        '</div>'
-    ).join('');
+    const assigned = getAlreadyAssigned();
+    c.innerHTML = currentAssignments.map((rid, i) => {
+        // Filter out already-assigned resources from other rows (prevent duplicates)
+        const availableResources = resources.filter(r => r.id === rid || !assigned.includes(r.id) || currentAssignments.indexOf(r.id) === i);
+        return '<div class="assignment-row">' +
+            '<select class="form-select" onchange="updateAssignment(' + i + ',this.value)">' +
+            '<option value="">-- Select Resource --</option>' +
+            availableResources.map(r => '<option value="' + esc(r.id) + '" ' + (rid === r.id ? 'selected' : '') + '>' + esc(r.name) + ' (' + esc(r.id) + ')</option>').join('') +
+            '</select>' +
+            '<div class="assignment-fte" id="assignFte' + i + '"></div>' +
+            '<button class="delete-btn" onclick="removeAssignment(' + i + ')">×</button>' +
+            '</div>';
+    }).join('');
     updateAssignmentFTEs();
 }
 
@@ -332,21 +491,27 @@ function addAssignmentRow() {
     currentAssignments.push('');
     renderAssignmentRows();
     updateFTEPerPerson();
-    renderSuggestions();
 }
 
 function removeAssignment(i) {
     currentAssignments.splice(i, 1);
     renderAssignmentRows();
     updateFTEPerPerson();
-    renderSuggestions();
 }
 
 function updateAssignment(i, val) {
+    // Prevent duplicate: if this resource is already assigned in another slot, reject
+    if (val && currentAssignments.includes(val) && currentAssignments.indexOf(val) !== i) {
+        toast('Resource already assigned', true);
+        // Reset the select back
+        renderAssignmentRows();
+        return;
+    }
     currentAssignments[i] = val;
     updateAssignmentFTEs();
     updateFTEPerPerson();
-    renderSuggestions();
+    // Re-render to update available options in other dropdowns
+    renderAssignmentRows();
 }
 
 function updateAssignmentFTEs() {
@@ -362,65 +527,26 @@ function updateAssignmentFTEs() {
     });
 }
 
-function addSuggestedResource(rid) {
-    if (!currentAssignments.includes(rid)) currentAssignments.push(rid);
-    renderAssignmentRows();
-    updateFTEPerPerson();
-    renderSuggestions();
-}
-
-// ─── Suggestions ─────────────────────────────────────────
-function getSuggestions(cats) {
-    if (!resources.length || !cats.length) return [];
-    return resources.map(r => {
-        const sk = r.skills || {};
-        // Average skill across selected categories
-        const totalSkill = cats.reduce((s, c) => s + (sk[c] || 0), 0);
-        const avgSkill = totalSkill / cats.length;
-        const score = avgSkill / 5;
-        const wp = calcResourceWeekPercent(r.id);
-        const avgLoad = wp.reduce((a, b) => a + b, 0) / 4;
-        const avail = Math.max(0, (100 - avgLoad) / 100);
-        return { resource: r, skillLevel: Math.round(avgSkill * 10) / 10, avgLoad: Math.round(avgLoad), combinedScore: (score * 0.6) + (avail * 0.4) };
-    }).filter(s => s.combinedScore > 0.1 && !currentAssignments.includes(s.resource.id))
-        .sort((a, b) => b.combinedScore - a.combinedScore).slice(0, 4);
-}
-
-function renderSuggestions() {
-    const c = document.getElementById('suggestionList');
-    const sugg = getSuggestions(currentCategories);
-    if (!sugg.length) { c.innerHTML = '<div class="no-suggestions">No matching resources found.</div>'; return; }
-    c.innerHTML = sugg.map(s => {
-        const r = s.resource;
-        const col = s.avgLoad > 100 ? 'var(--brand-oxblood)' : s.avgLoad > 85 ? 'var(--brand-amber)' : 'var(--accent-green)';
-        return '<div class="suggestion-item" onclick="addSuggestedResource(\'' + esc(r.id) + '\')">' +
-            '<div class="suggestion-info"><div class="suggestion-avatar" style="background:' + getResourceColor(r.id) + '">' + getInitials(r.name) + '</div>' +
-            '<div class="suggestion-details"><h4>' + esc(r.name) + '</h4><p>' + esc(r.role || '') + '</p></div></div>' +
-            '<div class="suggestion-stats">' +
-            '<div class="suggestion-stat"><div class="suggestion-stat-value">' + s.skillLevel + '/5</div><div class="suggestion-stat-label">Skill</div></div>' +
-            '<div class="suggestion-stat"><div class="suggestion-stat-value" style="color:' + col + '">' + s.avgLoad + '%</div><div class="suggestion-stat-label">Load</div></div>' +
-            '</div></div>';
-    }).join('');
-}
-
 // ─── Navigation ──────────────────────────────────────────
 function navigateTo(page) {
     currentPage = page;
     document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     document.getElementById('page-' + page).classList.add('active');
-    document.querySelector('.nav-item[data-page="' + page + '"]')?.classList.add('active');
+    const navEl = document.querySelector('.nav-item[data-page="' + page + '"]');
+    if (navEl) navEl.classList.add('active');
     renderCurrentPage();
 }
+
 document.querySelectorAll('.nav-item[data-page]').forEach(item => {
     item.addEventListener('click', () => navigateTo(item.dataset.page));
 });
+
 function renderCurrentPage() {
     if (currentPage === 'dashboard') renderDashboard();
     else if (currentPage === 'pipeline') renderPipelinePage();
     else if (currentPage === 'kanban') renderKanban();
     else if (currentPage === 'resources') renderResources();
-    else if (currentPage === 'skills') renderSkillsMatrix();
     else if (currentPage === 'capacity') renderHeatmap('heatmapTableFull');
 }
 
@@ -448,10 +574,9 @@ function updateStats() {
 function renderDashboard() {
     updateStats();
     renderFilters('dashboardFilters');
-    renderPipelineList('pipelineListDashboard', 5);
+    renderPipelineListCompact('pipelineListDashboard', 8);
     renderHeatmap('heatmapTable');
     renderAllocationDashboard();
-    renderCategoryCoverage();
 }
 
 // ─── Filters ─────────────────────────────────────────────
@@ -467,16 +592,29 @@ function renderFilters(containerId) {
         '</select>';
     c.innerHTML = html;
 }
+
 function setFilter(type, value) { currentFilters[type] = value; renderCurrentPage(); }
 
 // ─── Pipeline / Backlog List ─────────────────────────────
-function getCatsDisplay(wi) {
-    const cats = wi.categories || [];
-    if (cats.length === 0) return 'No category';
-    if (cats.length <= 2) return cats.join(', ');
-    return cats[0] + ' +' + (cats.length - 1);
+// Compact version for dashboard — title + status only
+function renderPipelineListCompact(containerId, limit) {
+    const c = document.getElementById(containerId);
+    let items = workItems.filter(w => w.status !== 'complete');
+    if (currentFilters.portfolioItem !== 'all') items = items.filter(w => w.portfolioItem === currentFilters.portfolioItem);
+    if (currentFilters.resource !== 'all') items = items.filter(w => (w.assignedResources || []).includes(currentFilters.resource));
+    const display = limit ? items.slice(0, limit) : items;
+    const remaining = limit ? items.length - limit : 0;
+    if (!display.length) { c.innerHTML = '<div class="empty-state">No work items</div>'; return; }
+    c.innerHTML = display.map(w => {
+        const statusLabel = w.status === 'progress' ? 'in progress' : w.status;
+        return '<div class="pipeline-item-compact" onclick="editWorkItem(\'' + esc(w.id) + '\')">' +
+            '<div class="pipeline-title-compact">' + esc(w.title) + '</div>' +
+            '<span class="pipeline-status status-' + w.status + '">' + statusLabel + '</span></div>';
+    }).join('');
+    if (remaining > 0) c.innerHTML += '<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:var(--fs-xxs)">+' + remaining + ' more</div>';
 }
 
+// Full version for backlog page
 function renderPipelineList(containerId, limit) {
     const c = document.getElementById(containerId);
     let items = workItems.filter(w => w.status !== 'complete');
@@ -494,9 +632,10 @@ function renderPipelineList(containerId, limit) {
             ? rids.slice(0, 2).map(id => { const r = getRes(id); return r ? '<span class="pipeline-resource"><span class="pipeline-resource-avatar" style="background:' + getResourceColor(id) + '">' + getInitials(r.name) + '</span>' + esc(r.id) + '</span>' : ''; }).join('') + (rids.length > 2 ? '<span style="color:var(--text-muted);font-size:var(--fs-xxs)">+' + (rids.length - 2) + '</span>' : '')
             : '<span class="pipeline-resource">--</span>';
         const dateStr = w.startDate ? new Date(w.startDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '';
+        const piLabel = (portfolioItems.find(p => p.id === w.portfolioItem) || {}).label || w.portfolioItem;
         return '<div class="pipeline-item" onclick="editWorkItem(\'' + esc(w.id) + '\')">' +
             '<div class="pipeline-info"><div class="pipeline-title">' + esc(w.title) + '</div>' +
-            '<div class="pipeline-meta">' + esc((portfolioItems.find(p => p.id === w.portfolioItem) || {}).label || w.portfolioItem) + ' · ' + esc(getCatsDisplay(w)) + (dateStr ? ' · ' + dateStr : '') + '</div></div>' +
+            '<div class="pipeline-meta">' + esc(piLabel) + (dateStr ? ' · ' + dateStr : '') + '</div></div>' +
             resHtml +
             '<span class="pipeline-effort">' + (w.size || 'M') + ' · ' + effortDays + 'd</span>' +
             '<span class="pipeline-effort">' + ftePct + '% FTE</span>' +
@@ -526,9 +665,10 @@ function renderKanban() {
                 const resHtml = rids.length > 0
                     ? rids.slice(0, 1).map(id => { const r = getRes(id); return r ? '<div class="kanban-card-resource"><span class="kanban-card-avatar" style="background:' + getResourceColor(id) + '">' + getInitials(r.name) + '</span>' + esc(r.name) + '</div>' : ''; }).join('')
                     : '<div class="kanban-card-resource">Unassigned</div>';
+                const piLabel = (portfolioItems.find(p => p.id === w.portfolioItem) || {}).label || '';
                 return '<div class="kanban-card" onclick="editWorkItem(\'' + esc(w.id) + '\')">' +
                     '<div class="kanban-card-title">' + esc(w.title) + '</div>' +
-                    '<div class="kanban-card-meta">' + esc((portfolioItems.find(p => p.id === w.portfolioItem) || {}).label || '') + ' · ' + esc(getCatsDisplay(w)) + '</div>' +
+                    '<div class="kanban-card-meta">' + esc(piLabel) + '</div>' +
                     '<div class="kanban-card-footer">' + resHtml + '<span class="kanban-card-effort">' + (w.size || 'M') + ' · ' + ftePct + '%</span></div></div>';
             }).join('') || '<div class="empty-state">No items</div>') + '</div></div>';
     }).join('');
@@ -581,26 +721,6 @@ function renderHeatmap(tableId) {
     t.innerHTML = html;
 }
 
-// ─── Category Coverage ───────────────────────────────────
-function renderCategoryCoverage() {
-    const c = document.getElementById('categoryCoverage');
-    const data = categories.slice(0, 5).map(cat => {
-        const cap = resources.reduce((s, r) => s + ((r.skills && r.skills[cat]) || 0) * 20, 0);
-        const dem = workItems.filter(w => w.status !== 'complete' && (w.categories || []).includes(cat)).length * 25;
-        return { name: cat, capacity: Math.min(cap, 100), demand: Math.min(dem, 100) };
-    });
-    if (!data.length) { c.innerHTML = '<div class="empty-state">No categories defined</div>'; return; }
-    c.innerHTML = data.map(d => {
-        const gap = d.demand - d.capacity;
-        const gc = gap > 0 ? 'negative' : gap < 0 ? 'positive' : '';
-        return '<div class="category-row"><div class="category-name">' + esc(d.name) + '</div>' +
-            '<div class="category-bars"><div class="category-bar"><div class="category-fill capacity" style="width:' + d.capacity + '%"></div></div>' +
-            '<div class="category-bar"><div class="category-fill demand" style="width:' + d.demand + '%"></div></div></div>' +
-            '<div class="category-gap ' + gc + '">' + (gap > 0 ? '+' : '') + gap + '%</div></div>';
-    }).join('');
-    if (categories.length > 5) c.innerHTML += '<div style="text-align:center;padding:10px;color:var(--text-muted);font-size:var(--fs-xs)">+' + (categories.length - 5) + ' more</div>';
-}
-
 // ─── Resources ───────────────────────────────────────────
 function renderResources() {
     const g = document.getElementById('resourcesGrid');
@@ -609,7 +729,6 @@ function renderResources() {
         const w = calcResourceWeekPercent(r.id);
         const avg = Math.round(w.reduce((a, b) => a + b, 0) / w.length);
         const availDays = getResourceAvailableDays(r.id);
-        const topCats = Object.entries(r.skills || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([s]) => s);
         const assignedCount = workItems.filter(wi => (wi.assignedResources || []).includes(r.id) && wi.status !== 'complete').length;
         const peakWeek = Math.max(...w);
         return '<div class="resource-card" onclick="editResource(\'' + esc(r.id) + '\')">' +
@@ -619,98 +738,14 @@ function renderResources() {
             '<div class="resource-stats"><div class="resource-stat"><div class="resource-stat-label">Available</div><div class="resource-stat-value">' + availDays + 'd/wk</div></div>' +
             '<div class="resource-stat"><div class="resource-stat-label">Avg Util</div><div class="resource-stat-value" style="color:' + (avg > 100 ? 'var(--brand-oxblood)' : avg > 85 ? 'var(--brand-amber)' : 'var(--accent-green)') + '">' + avg + '%</div></div></div>' +
             '<div class="resource-stats"><div class="resource-stat"><div class="resource-stat-label">Work Items</div><div class="resource-stat-value">' + assignedCount + '</div></div>' +
-            '<div class="resource-stat"><div class="resource-stat-label">Peak Week</div><div class="resource-stat-value" style="color:' + (peakWeek > 100 ? 'var(--brand-oxblood)' : peakWeek > 85 ? 'var(--brand-amber)' : 'var(--accent-green)') + '">' + peakWeek + '%</div></div></div>' +
-            '<div class="resource-categories">' + (topCats.map(s => '<span class="category-tag">' + esc(s) + '</span>').join('') || '<span style="color:var(--text-muted);font-size:var(--fs-xxs)">No skills rated</span>') + '</div></div>';
+            '<div class="resource-stat"><div class="resource-stat-label">Peak Week</div><div class="resource-stat-value" style="color:' + (peakWeek > 100 ? 'var(--brand-oxblood)' : peakWeek > 85 ? 'var(--brand-amber)' : 'var(--accent-green)') + '">' + peakWeek + '%</div></div></div></div>';
     }).join('');
-}
-
-// ─── Skills Matrix ───────────────────────────────────────
-function renderSkillsMatrix() {
-    const t = document.getElementById('skillsTable');
-    if (!resources.length) { t.innerHTML = '<tr><td class="empty-state">Add resources first</td></tr>'; return; }
-    resources.forEach(r => { if (!r.skills) r.skills = {}; categories.forEach(c => { if (r.skills[c] === undefined) r.skills[c] = 0; }); });
-    let html = '<tr><th>Category</th>' +
-        resources.map(r => '<th>' + esc(r.name.split(' ')[0]) + '<br><span style="font-weight:400;font-size:var(--fs-xxs);color:var(--text-muted)">' + esc(r.id) + '</span></th>').join('') +
-        '<th></th></tr>';
-    categories.forEach(cat => {
-        html += '<tr><td><span class="category-name-edit" onclick="editCategory(\'' + esc(cat) + '\')" title="Click to edit">' + esc(cat) + '</span></td>' +
-            resources.map(r => {
-                const lvl = r.skills[cat] || 0;
-                return '<td><select class="skill-select level-' + lvl + '" onchange="setSkill(\'' + esc(r.id) + '\',\'' + esc(cat) + '\',parseInt(this.value))">' +
-                    [0, 1, 2, 3, 4, 5].map(l => '<option value="' + l + '" ' + (lvl === l ? 'selected' : '') + '>' + l + '</option>').join('') +
-                    '</select></td>';
-            }).join('') +
-            '<td><button class="delete-btn" onclick="deleteCategory(\'' + esc(cat) + '\')">×</button></td></tr>';
-    });
-    t.innerHTML = html;
-}
-
-function setSkill(rid, cat, lvl) {
-    const r = resources.find(x => x.id === rid);
-    if (!r) return;
-    if (!r.skills) r.skills = {};
-    r.skills[cat] = lvl;
-    save();
-    renderSkillsMatrix();
-    if (currentPage === 'dashboard') renderCategoryCoverage();
-}
-
-// ─── Category CRUD ───────────────────────────────────────
-function openCategoryModal(editName) {
-    document.getElementById('categoryModal').classList.add('active');
-    document.getElementById('newCategoryName').value = editName || '';
-    document.getElementById('editCatOriginal').value = editName || '';
-    if (editName) {
-        document.getElementById('catModalTitle').textContent = 'Edit Category';
-        document.getElementById('catModalSaveBtn').textContent = 'Save';
-    } else {
-        document.getElementById('catModalTitle').textContent = 'Add Work Item Category';
-        document.getElementById('catModalSaveBtn').textContent = 'Add';
-    }
-}
-function editCategory(catName) { openCategoryModal(catName); }
-function saveCategory() {
-    const name = document.getElementById('newCategoryName').value.trim();
-    const original = document.getElementById('editCatOriginal').value;
-    if (!name) { toast('Name required', true); return; }
-    if (original) {
-        if (name !== original && categories.includes(name)) { toast('Already exists', true); return; }
-        const idx = categories.indexOf(original);
-        if (idx >= 0) categories[idx] = name;
-        resources.forEach(r => {
-            if (r.skills && r.skills[original] !== undefined) {
-                r.skills[name] = r.skills[original];
-                if (name !== original) delete r.skills[original];
-            }
-        });
-        workItems.forEach(w => {
-            if (w.categories) w.categories = w.categories.map(c => c === original ? name : c);
-        });
-    } else {
-        if (categories.includes(name)) { toast('Already exists', true); return; }
-        categories.push(name);
-        resources.forEach(r => { if (!r.skills) r.skills = {}; r.skills[name] = 0; });
-    }
-    save();
-    closeModal('categoryModal');
-    renderCurrentPage();
-    toast(original ? 'Category updated' : 'Category added');
-}
-function deleteCategory(cat) {
-    if (!confirm('Delete category "' + cat + '"?')) return;
-    categories = categories.filter(c => c !== cat);
-    resources.forEach(r => { if (r.skills) delete r.skills[cat]; });
-    workItems.forEach(w => { if (w.categories) w.categories = w.categories.filter(c => c !== cat); });
-    save();
-    renderCurrentPage();
-    toast('Deleted');
 }
 
 // ─── Work Item CRUD ──────────────────────────────────────
 function openWorkItemModal(id) {
     document.getElementById('workItemModal').classList.add('active');
     currentAssignments = [];
-    currentCategories = [];
     if (id) {
         const w = workItems.find(x => x.id === id);
         if (w) {
@@ -718,16 +753,14 @@ function openWorkItemModal(id) {
             document.getElementById('editWiId').value = w.id;
             document.getElementById('wiTitle').value = w.title || '';
             document.getElementById('wiPortfolioItem').value = w.portfolioItem || 'adhoc';
-            currentCategories = [...(w.categories || [])];
             document.getElementById('wiSize').value = w.size || 'M';
             document.getElementById('wiDuration').value = w.duration || 20;
-            document.getElementById('wiStartDate').value = w.startDate || '';
             document.getElementById('wiStatus').value = w.status || 'upcoming';
             currentAssignments = [...(w.assignedResources || [])];
-            populateCategoryCheckboxes();
+            document.getElementById('wiStartDate').value = w.startDate || '';
             renderAssignmentRows();
             updateEstimation();
-            renderSuggestions();
+            updateStartDateHint();
             return;
         }
     }
@@ -737,12 +770,11 @@ function openWorkItemModal(id) {
     document.getElementById('wiPortfolioItem').value = 'pstom';
     document.getElementById('wiSize').value = 'M';
     document.getElementById('wiDuration').value = '20';
-    document.getElementById('wiStartDate').value = '';
     document.getElementById('wiStatus').value = 'upcoming';
-    populateCategoryCheckboxes();
+    document.getElementById('wiStartDate').value = '';
     renderAssignmentRows();
     updateEstimation();
-    renderSuggestions();
+    updateStartDateHint();
 }
 
 function editWorkItem(id) { openWorkItemModal(id); }
@@ -754,14 +786,15 @@ function saveWorkItem() {
     const startDate = document.getElementById('wiStartDate').value || '';
     const duration = parseInt(document.getElementById('wiDuration').value) || 20;
     let status = document.getElementById('wiStatus').value;
-    // Auto-derive status from start date if set (unless manually set to blocked)
-    if (startDate && status !== 'blocked') {
+
+    // Auto-derive status from start date if set (unless manually set to blocked/complete)
+    if (startDate && status !== 'blocked' && status !== 'complete') {
         status = deriveStatus(startDate, duration);
     }
+
     const item = {
         id, title,
         portfolioItem: document.getElementById('wiPortfolioItem').value,
-        categories: [...currentCategories],
         size: document.getElementById('wiSize').value,
         duration,
         startDate,
@@ -778,11 +811,30 @@ function saveWorkItem() {
 }
 
 function deleteWorkItem(id) {
-    if (!confirm('Delete this work item?')) return;
-    workItems = workItems.filter(w => w.id !== id);
-    save();
-    renderCurrentPage();
-    toast('Deleted');
+    const wi = workItems.find(w => w.id === id);
+    if (!wi) return;
+
+    const assignedNames = (wi.assignedResources || []).map(rid => {
+        const r = getRes(rid);
+        return r ? r.name : rid;
+    });
+
+    const details = assignedNames.length > 0
+        ? 'Assigned to: ' + assignedNames.join(', ')
+        : 'No resources assigned';
+
+    showConfirm(
+        'Delete Work Item',
+        'Are you sure you want to delete "' + wi.title + '"? This can be undone.',
+        details,
+        function () {
+            pushUndo('deleteWorkItem', wi, 'delete "' + wi.title + '"');
+            workItems = workItems.filter(w => w.id !== id);
+            save();
+            renderCurrentPage();
+            toast('Deleted "' + wi.title + '"', false, true);
+        }
+    );
 }
 
 // ─── Resource CRUD ───────────────────────────────────────
@@ -811,7 +863,9 @@ function openResourceModal(id) {
     document.getElementById('resFTE').value = '1.0';
     document.getElementById('resBaseline').value = '0';
 }
+
 function editResource(id) { openResourceModal(id); }
+
 function saveResource() {
     const existingId = document.getElementById('editResId').value;
     const role = document.getElementById('resRole').value;
@@ -823,16 +877,12 @@ function saveResource() {
     const r = {
         id: newId, name, role,
         totalFTE: parseFloat(document.getElementById('resFTE').value) || 1,
-        baselineCommitment: parseFloat(document.getElementById('resBaseline').value) || 0,
-        skills: {}
+        baselineCommitment: parseFloat(document.getElementById('resBaseline').value) || 0
     };
     if (existingId) {
-        const existing = resources.find(x => x.id === existingId);
-        if (existing) r.skills = existing.skills || {};
         const idx = resources.findIndex(x => x.id === existingId);
         if (idx >= 0) resources[idx] = r;
     } else {
-        categories.forEach(c => r.skills[c] = 0);
         resources.push(r);
     }
     save();
@@ -840,26 +890,205 @@ function saveResource() {
     renderCurrentPage();
     toast(existingId ? 'Updated' : 'Added');
 }
+
 function deleteResource(id) {
-    if (!confirm('Delete resource?')) return;
-    resources = resources.filter(r => r.id !== id);
-    workItems.forEach(w => { if (w.assignedResources) w.assignedResources = w.assignedResources.filter(r => r !== id); });
-    save();
-    renderCurrentPage();
-    toast('Deleted');
+    const r = resources.find(x => x.id === id);
+    if (!r) return;
+
+    // Find affected work items
+    const affected = workItems.filter(w => (w.assignedResources || []).includes(id));
+    const affectedDetails = affected.length > 0
+        ? 'This resource is assigned to ' + affected.length + ' work item(s): ' +
+        affected.slice(0, 3).map(w => '"' + w.title + '"').join(', ') +
+        (affected.length > 3 ? ' and ' + (affected.length - 3) + ' more' : '') +
+        '. They will be unassigned.'
+        : null;
+
+    showConfirm(
+        'Delete Resource',
+        'Are you sure you want to delete ' + r.name + ' (' + r.id + ')? This can be undone.',
+        affectedDetails,
+        function () {
+            // Save undo data including affected work items' original assignments
+            const undoData = {
+                resource: { ...r },
+                affectedItems: affected.map(w => ({ id: w.id, assignedResources: [...(w.assignedResources || [])] }))
+            };
+            pushUndo('deleteResource', undoData, 'delete ' + r.name);
+
+            resources = resources.filter(x => x.id !== id);
+            workItems.forEach(w => {
+                if (w.assignedResources) w.assignedResources = w.assignedResources.filter(x => x !== id);
+            });
+            save();
+            renderCurrentPage();
+            toast('Deleted ' + r.name, false, true);
+        }
+    );
+}
+
+// ─── CSV Parsing ─────────────────────────────────────────
+function parseCSV(text) {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return { headers: [], rows: [] };
+    const headers = parseCSVLine(lines[0]);
+    const rows = lines.slice(1).map(l => parseCSVLine(l));
+    return { headers, rows };
+}
+
+function parseCSVLine(line) {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inQuotes) {
+            if (ch === '"') {
+                if (i + 1 < line.length && line[i + 1] === '"') {
+                    current += '"';
+                    i++;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                current += ch;
+            }
+        } else {
+            if (ch === '"') {
+                inQuotes = true;
+            } else if (ch === ',') {
+                result.push(current.trim());
+                current = '';
+            } else {
+                current += ch;
+            }
+        }
+    }
+    result.push(current.trim());
+    return result;
+}
+
+function getCSVField(row, headers, fieldName) {
+    const idx = headers.findIndex(h => h.toLowerCase().replace(/[^a-z]/g, '') === fieldName.toLowerCase().replace(/[^a-z]/g, ''));
+    return idx >= 0 && idx < row.length ? row[idx] : '';
+}
+
+// ─── CSV Import: Work Items ──────────────────────────────
+function importWorkItemsCSV(input) {
+    const file = input.files[0];
+    if (!file) return;
+    input.value = ''; // Reset so same file can be re-selected
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        try {
+            const { headers, rows } = parseCSV(e.target.result);
+            if (!headers.length) { toast('Empty CSV file', true); return; }
+
+            let imported = 0, skipped = 0;
+
+            rows.forEach(row => {
+                const title = getCSVField(row, headers, 'title');
+                if (!title) { skipped++; return; }
+
+                const id = getCSVField(row, headers, 'id') || ('WI' + Date.now() + Math.random().toString(36).slice(2, 6));
+                const portfolioItem = getCSVField(row, headers, 'portfolioitem') || 'adhoc';
+                const sizeRaw = getCSVField(row, headers, 'size').toUpperCase();
+                const size = ['XS', 'S', 'M', 'L', 'XL', 'XXL'].includes(sizeRaw) ? sizeRaw : 'M';
+                const duration = Math.max(1, Math.min(260, parseInt(getCSVField(row, headers, 'duration')) || 20));
+                const startDate = getCSVField(row, headers, 'startdate');
+                const statusRaw = getCSVField(row, headers, 'status').toLowerCase();
+                let status = ['upcoming', 'progress', 'blocked', 'complete'].includes(statusRaw) ? statusRaw : 'upcoming';
+
+                // Derive status from date if applicable
+                if (startDate && isValidDateStr(startDate) && status !== 'blocked' && status !== 'complete') {
+                    status = deriveStatus(startDate, duration);
+                }
+
+                const item = {
+                    id, title,
+                    portfolioItem: ['pstom', 'integration', 'strategic', 'adhoc'].includes(portfolioItem) ? portfolioItem : 'adhoc',
+                    size, duration,
+                    startDate: isValidDateStr(startDate) ? startDate : '',
+                    status,
+                    assignedResources: []
+                };
+
+                // Check for duplicate ID
+                const existingIdx = workItems.findIndex(w => w.id === id);
+                if (existingIdx >= 0) {
+                    workItems[existingIdx] = item;
+                } else {
+                    workItems.push(item);
+                }
+                imported++;
+            });
+
+            save();
+            renderCurrentPage();
+            toast('Imported ' + imported + ' work items' + (skipped > 0 ? ', ' + skipped + ' skipped' : ''));
+        } catch (err) {
+            console.error('CSV import error:', err);
+            toast('Failed to parse CSV file', true);
+        }
+    };
+    reader.readAsText(file);
+}
+
+// ─── CSV Import: Resources ───────────────────────────────
+function importResourcesCSV(input) {
+    const file = input.files[0];
+    if (!file) return;
+    input.value = '';
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        try {
+            const { headers, rows } = parseCSV(e.target.result);
+            if (!headers.length) { toast('Empty CSV file', true); return; }
+
+            let imported = 0, skipped = 0;
+
+            rows.forEach(row => {
+                const name = getCSVField(row, headers, 'name');
+                const role = getCSVField(row, headers, 'role');
+
+                if (!name || !role) { skipped++; return; }
+                if (!validRoles.includes(role)) { skipped++; return; }
+
+                const id = generateResourceId(role);
+                if (!id) { skipped++; return; }
+
+                const totalFTE = Math.max(0.1, Math.min(1.0, parseFloat(getCSVField(row, headers, 'totalfte')) || 1));
+                const baselineCommitment = Math.max(0, Math.min(1.0, parseFloat(getCSVField(row, headers, 'baselinecommitment')) || 0));
+
+                resources.push({ id, name, role, totalFTE, baselineCommitment });
+                imported++;
+            });
+
+            save();
+            renderCurrentPage();
+            toast('Imported ' + imported + ' resources' + (skipped > 0 ? ', ' + skipped + ' skipped' : ''));
+        } catch (err) {
+            console.error('CSV import error:', err);
+            toast('Failed to parse CSV file', true);
+        }
+    };
+    reader.readAsText(file);
 }
 
 // ─── Export ──────────────────────────────────────────────
 function exportAllData() {
-    let wi = 'ID,Title,PortfolioItem,Categories,Size,EffortDays,Duration,StartDate,FTE%,Status,AssignedResources\n';
+    let wi = 'ID,Title,PortfolioItem,Size,EffortDays,Duration,StartDate,FTE%,Status,AssignedResources\n';
     workItems.forEach(w => {
         const ed = getEffortDays(w.size || 'M');
         const fte = getWiFTEPercent(w);
         wi += [w.id, '"' + (w.title || '').replace(/"/g, '""') + '"', w.portfolioItem,
-            '"' + (w.categories || []).join('; ') + '"', w.size || 'M', ed, w.duration || 20,
+            w.size || 'M', ed, w.duration || 20,
             w.startDate || '', fte + '%', w.status, '"' + (w.assignedResources || []).join(';') + '"'].join(',') + '\n';
     });
     downloadBlob(wi, 'workitems_export.csv');
+
     let res = 'ID,Name,Role,TotalFTE,BaselineCommitment,AvailableDaysPerWeek\n';
     resources.forEach(r => {
         res += [r.id, '"' + (r.name || '') + '"', '"' + (r.role || '') + '"', r.totalFTE || 1, r.baselineCommitment || 0, getResourceAvailableDays(r.id)].join(',') + '\n';
@@ -867,6 +1096,7 @@ function exportAllData() {
     downloadBlob(res, 'resources_export.csv');
     toast('2 files exported');
 }
+
 function exportCapacity() {
     let csv = 'Resource,ID,Role,AvailableDays,' + weekLabels.map(l => l + ' (%)').join(',') + ',' + weekLabels.map(l => l + ' (days)').join(',') + ',Average %\n';
     resources.forEach(r => {
@@ -878,6 +1108,7 @@ function exportCapacity() {
     downloadBlob(csv, 'capacity_export.csv');
     toast('Exported');
 }
+
 function downloadBlob(content, filename) {
     const blob = new Blob([content], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -885,11 +1116,11 @@ function downloadBlob(content, filename) {
     a.download = filename;
     a.click();
 }
+
 function downloadTemplate(type) {
     let csv = '';
-    if (type === 'workitems') csv = 'ID,Title,PortfolioItem,Categories,Size,Duration,StartDate,Status\n';
-    if (type === 'resources') csv = 'Name,Role,TotalFTE,BaselineCommitment\n';
-    if (type === 'skills') csv = 'ResourceID,Category,Level\n';
+    if (type === 'workitems') csv = 'ID,Title,PortfolioItem,Size,Duration,StartDate,Status\nWI001,Example Task,pstom,M,20,2025-02-10,upcoming\n';
+    if (type === 'resources') csv = 'Name,Role,TotalFTE,BaselineCommitment\nJane Smith,Project Manager,1.0,0.2\n';
     downloadBlob(csv, type + '_template.csv');
 }
 
